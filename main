@@ -1,0 +1,133 @@
+import threading
+import time
+import random
+import logging
+
+# Configuração de logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+class Node:
+    def __init__(self, id, cluster):
+        self.id = id
+        self.cluster = cluster
+        self.state = "follower"  # Estados: "follower", "candidate", "leader"
+        self.term = 0  # Termo atual
+        self.voted_for = None
+        self.is_leader = False
+        self.log = []
+        self.votes_received = 0
+        self.failed = False  # Indica se o nó está ativo ou falhou
+        self.running = True  # Controla o loop principal do nó
+
+    def start(self):
+        # Inicia o loop principal do nó em uma thread separada
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def run(self):
+        while self.running:
+            if not self.failed:  # Só opera se o nó não estiver falhando
+                if self.state == "follower":
+                    self.follow()
+                elif self.state == "candidate":
+                    self.campaign()
+                elif self.state == "leader":
+                    self.lead()
+            time.sleep(0.5)
+
+    def follow(self):
+        logging.info(f"Nó {self.id} está em estado de seguidor no termo {self.term}.")
+        time.sleep(random.uniform(2, 5))  # Timeout aleatório para evitar colisões de eleição
+        if not self.failed:
+            self.state = "candidate"
+
+    def campaign(self):
+        self.term += 1
+        self.votes_received = 1  # Sempre vota em si mesmo
+        self.voted_for = self.id
+        logging.info(f"Nó {self.id} iniciou uma campanha eleitoral no termo {self.term}.")
+        for node in self.cluster.nodes:
+            if node.id != self.id and not node.failed:
+                if node.request_vote(self.id, self.term):
+                    self.votes_received += 1
+
+        # Verifica se a maioria votou para este nó
+        if self.votes_received > len(self.cluster.nodes) // 2:
+            self.state = "leader"
+            self.is_leader = True
+            logging.info(f"Nó {self.id} foi eleito líder no termo {self.term}.")
+        else:
+            self.state = "follower"
+
+    def lead(self):
+        logging.info(f"Nó {self.id} está enviando batimentos cardíacos como líder.")
+        for node in self.cluster.nodes:
+            if node.id != self.id and not node.failed:
+                node.receive_heartbeat(self.id)
+        time.sleep(1)  # Intervalo de batimentos cardíacos
+
+    def request_vote(self, candidate_id, term):
+        if term > self.term and (self.voted_for is None or self.voted_for == candidate_id):
+            self.voted_for = candidate_id
+            self.term = term
+            logging.info(f"Nó {self.id} votou no candidato {candidate_id} no termo {term}.")
+            return True
+        return False
+
+    def receive_heartbeat(self, leader_id):
+        logging.info(f"Nó {self.id} recebeu batimento cardíaco do líder {leader_id}.")
+        self.state = "follower"
+
+    def fail(self):
+        self.failed = True
+        logging.warning(f"Nó {self.id} falhou!")
+
+    def recover(self):
+        self.failed = False
+        self.voted_for = None
+        logging.info(f"Nó {self.id} se recuperou e está reiniciando como seguidor.")
+        self.state = "follower"
+
+
+class Cluster:
+    def __init__(self, num_nodes):
+        self.nodes = [Node(i, self) for i in range(num_nodes)]
+
+    def start(self):
+        for node in self.nodes:
+            node.start()
+
+    def fail_node(self, node_id):
+        node = self.get_node(node_id)
+        if node:
+            node.fail()
+
+    def recover_node(self, node_id):
+        node = self.get_node(node_id)
+        if node:
+            node.recover()
+
+    def get_node(self, node_id):
+        return next((node for node in self.nodes if node.id == node_id), None)
+
+    def simulate(self):
+        # Simula o cluster em execução com falhas e recuperações
+        try:
+            while True:
+                time.sleep(10)
+                # Aleatoriamente falha ou recupera um nó
+                node = random.choice(self.nodes)
+                if node.failed:
+                    self.recover_node(node.id)
+                else:
+                    self.fail_node(node.id)
+        except KeyboardInterrupt:
+            logging.info("Simulação encerrada.")
+
+
+# Inicialização do cluster
+cluster = Cluster(5)
+cluster.start()
+
+# Inicia a simulação de falhas
+cluster.simulate()
